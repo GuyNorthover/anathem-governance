@@ -16,6 +16,7 @@ import {
   AlertTriangle,
   Flag,
   Library,
+  Briefcase,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Separator } from "@/components/ui/separator";
@@ -66,6 +67,11 @@ const navItems = [
     label: "EU Document Library",
     href: ROUTES.EU_TEMPLATES,
     icon: Library,
+  },
+  {
+    label: "Business Cases",
+    href: ROUTES.BUSINESS_CASE_BUILDER,
+    icon: Briefcase,
   },
   {
     label: "Prompt Library",

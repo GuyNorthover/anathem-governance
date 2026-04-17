@@ -5,7 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
   ArrowLeft, MapPin, Calendar, Mail, Shield,
-  FileText, Database, AlertTriangle, CheckCircle2, ToggleLeft,
+  FileText, Database, AlertTriangle, CheckCircle2, ToggleLeft, Briefcase,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
@@ -20,6 +20,7 @@ import { useDocuments } from "@/resources/hooks/use-documents";
 import { useFacts } from "@/resources/hooks/use-facts";
 import { useOrganisations } from "@/resources/hooks/use-organisations";
 import { NewDocumentDialog } from "@/components/documents/NewDocumentDialog";
+import { BusinessCaseDialog } from "@/components/organisations/BusinessCaseDialog";
 import { MODULE_LABELS } from "@/lib/knowledge-base/types";
 import { STATUS_STYLES } from "@/lib/documents/types";
 import type { Organisation } from "@/lib/organisations/types";
@@ -46,6 +47,7 @@ export function OrganisationDetailView({ org, onReload }: OrganisationDetailView
   const { data: allFacts } = useFacts();
   const { toggleModule, reload: reloadOrg } = useOrganisations();
   const [newDocOpen, setNewDocOpen] = useState(false);
+  const [bizCaseOpen, setBizCaseOpen] = useState(false);
   const reload = () => { reloadOrg(); onReload?.(); };
   const orgDocs = allDocs.filter((d) => d.orgId === org.id);
   const orgFactOverrides = allFacts.filter(
@@ -331,11 +333,45 @@ export function OrganisationDetailView({ org, onReload }: OrganisationDetailView
             )}
           </div>
         </div>
+
+        {/* Business Cases */}
+        <div>
+          <div className="rounded-lg border border-slate-200 bg-white p-4">
+            <div className="flex items-start justify-between gap-4">
+              <div className="flex items-start gap-3">
+                <div className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-lg bg-indigo-50">
+                  <Briefcase className="h-4 w-4 text-indigo-600" />
+                </div>
+                <div className="flex flex-col gap-0.5">
+                  <p className="text-sm font-semibold text-slate-900">Business Cases</p>
+                  <p className="text-xs text-slate-500">
+                    Upload business case documents to automatically extract org-specific facts
+                    into the knowledge base.
+                  </p>
+                </div>
+              </div>
+              <Button
+                size="sm"
+                className="flex-shrink-0 bg-indigo-600 text-white hover:bg-indigo-700"
+                onClick={() => setBizCaseOpen(true)}
+              >
+                Upload Business Case
+              </Button>
+            </div>
+          </div>
+        </div>
       </div>
       <NewDocumentDialog
         open={newDocOpen}
         onClose={() => setNewDocOpen(false)}
         onCreated={() => setNewDocOpen(false)}
+      />
+      <BusinessCaseDialog
+        open={bizCaseOpen}
+        orgId={org.id}
+        orgName={org.name}
+        onClose={() => setBizCaseOpen(false)}
+        onFactsAdded={(count) => { setBizCaseOpen(false); reload(); }}
       />
     </div>
   );

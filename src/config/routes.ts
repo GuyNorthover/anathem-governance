@@ -8,6 +8,7 @@ export const ROUTES = {
   HAZARD_LOG: "/hazard-log",
   EU_ACCREDITATION: "/eu-accreditation",
   EU_TEMPLATES: "/eu-templates",
+  BUSINESS_CASE_BUILDER: "/business-case-builder",
   PROMPTS: "/prompts",
   INGESTION: "/ingestion",
   AUDIT: "/audit",

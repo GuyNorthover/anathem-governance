@@ -26,6 +26,7 @@ const PAGE_TITLES: [string, string][] = [
   ["/hazard-log",     "Hazard Log"],
   ["/eu-accreditation", "EU MDR Accreditation"],
   ["/eu-templates",   "EU Document Library"],
+  ["/business-case-builder", "Business Case Builder"],
   ["/prompts",        "Prompt Library"],
   ["/ingestion",      "Ingestion"],
   ["/audit",          "Audit Log"],

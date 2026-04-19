@@ -150,7 +150,7 @@ ${templateText.slice(0, 10000)}${templateText.length > 10000 ? "\n\n[Truncated]"
 
     const referenceIds = referenceCases.map((r) => r.id);
 
-    // 4. Insert bc_projects row
+    // 4. Insert bc_projects row (store original template binary for format-faithful download)
     const { error: projectErr } = await supabase.from("bc_projects").insert({
       id: projectId,
       org_name: orgName,
@@ -158,6 +158,7 @@ ${templateText.slice(0, 10000)}${templateText.length > 10000 ? "\n\n[Truncated]"
       template_structure: templateSections,
       status: "drafting",
       reference_case_ids: referenceIds,
+      template_binary: fileBuffer.toString("base64"),
     });
 
     if (projectErr) {

@@ -320,148 +320,217 @@ function UploadReferenceDialog({
   );
 }
 
-// ── Section card ──────────────────────────────────────────────────────────────
+// ── Questions panel ───────────────────────────────────────────────────────────
+// Shows ALL data_requests from ALL sections in a single consolidated form.
 
-function SectionCard({
-  section,
-  projectId,
+function QuestionsPanel({
+  project,
   onComplete,
 }: {
-  section: BCSection;
-  projectId: string;
+  project: BCProjectDetail;
   onComplete: () => void;
 }) {
-  const [expanded, setExpanded] = useState(false);
-  const [dataValues, setDataValues] = useState<Record<string, string>>({});
+  // Build a flat list of questions, keyed by sectionId+field
+  const sectionsWithRequests = project.sections.filter(
+    (s) => s.status === "needs_data" && s.data_requests.length > 0
+  );
+
+  const [values, setValues] = useState<Record<string, string>>(() => {
+    const init: Record<string, string> = {};
+    for (const s of sectionsWithRequests) {
+      for (const dr of s.data_requests) {
+        init[`${s.id}::${dr.field}`] = dr.provided_value ?? "";
+      }
+    }
+    return init;
+  });
+
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [done, setDone] = useState(false);
 
-  const content = section.final_content ?? section.draft_content ?? "";
-  const preview = content.slice(0, 150) + (content.length > 150 ? "…" : "");
+  const totalRequired = sectionsWithRequests.reduce(
+    (sum, s) => sum + s.data_requests.filter((d) => d.required).length,
+    0
+  );
+  const totalAnswered = sectionsWithRequests.reduce(
+    (sum, s) =>
+      sum +
+      s.data_requests.filter(
+        (d) => d.required && (values[`${s.id}::${d.field}`] ?? "").trim()
+      ).length,
+    0
+  );
 
-  async function handleCompleteSection() {
+  async function handleSubmitAll() {
     setSubmitting(true);
     setError(null);
     try {
-      const res = await fetch("/api/bc/provide-data", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          projectId,
-          sectionId: section.id,
-          dataValues,
-        }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error ?? "Failed to complete section");
+      for (const section of sectionsWithRequests) {
+        const dataValues: Record<string, string> = {};
+        for (const dr of section.data_requests) {
+          const v = values[`${section.id}::${dr.field}`];
+          if (v?.trim()) dataValues[dr.field] = v.trim();
+        }
+        if (Object.keys(dataValues).length === 0) continue;
+
+        const res = await fetch("/api/bc/provide-data", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ projectId: project.id, sectionId: section.id, dataValues }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(`${section.title}: ${data.error ?? "failed"}`);
+      }
+      setDone(true);
       onComplete();
     } catch (e: any) {
-      setError(e.message ?? "Error");
+      setError(e.message ?? "Submission failed");
     } finally {
       setSubmitting(false);
     }
   }
 
-  return (
-    <div className="rounded-xl border border-slate-200 bg-white overflow-hidden">
-      {/* Section header */}
-      <div
-        className="flex items-center justify-between px-4 py-3 cursor-pointer hover:bg-slate-50 transition-colors"
-        onClick={() => setExpanded(!expanded)}
-      >
-        <div className="flex items-center gap-3 min-w-0">
-          <ChevronRight
-            className={cn(
-              "h-4 w-4 flex-shrink-0 text-slate-400 transition-transform",
-              expanded && "rotate-90"
-            )}
-          />
-          <span className="text-sm font-semibold text-slate-800 truncate">
-            {section.title}
-          </span>
-        </div>
-        <div className="flex-shrink-0 ml-3">
-          <StatusBadge status={section.status} />
+  if (sectionsWithRequests.length === 0) {
+    return (
+      <div className="rounded-xl border border-green-200 bg-green-50 px-5 py-4 flex items-center gap-3">
+        <CheckCircle2 className="h-5 w-5 text-green-500 flex-shrink-0" />
+        <div>
+          <p className="text-sm font-semibold text-green-800">All sections drafted</p>
+          <p className="text-xs text-green-600 mt-0.5">
+            Download the business case below. Any remaining [INSERT: ...] placeholders can be completed in Word.
+          </p>
         </div>
       </div>
+    );
+  }
 
-      {/* Content preview (collapsed) */}
-      {!expanded && content && (
-        <div className="px-4 pb-3">
-          <p className="text-xs text-slate-500 leading-relaxed pl-7">{preview}</p>
+  return (
+    <div className="rounded-xl border border-slate-200 bg-white overflow-hidden">
+      {/* Header */}
+      <div className="flex items-center justify-between px-5 py-3 border-b border-slate-100 bg-slate-50">
+        <div>
+          <p className="text-sm font-semibold text-slate-900">
+            Questions to answer
+          </p>
+          <p className="text-xs text-slate-500 mt-0.5">
+            {totalAnswered} of {totalRequired} required fields completed
+          </p>
         </div>
-      )}
-
-      {/* Expanded content */}
-      {expanded && (
-        <div className="border-t border-slate-100 px-4 py-4 space-y-4">
-          {/* Content */}
-          {content && (
-            <div>
-              <p className="text-[10px] font-semibold uppercase tracking-wider text-slate-400 mb-2">
-                {section.status === "complete" ? "Completed content" : "Draft content"}
-              </p>
-              <p className="text-xs text-slate-700 leading-relaxed whitespace-pre-wrap">
-                {content}
-              </p>
+        {totalRequired > 0 && (
+          <div className="flex items-center gap-2">
+            <div className="h-1.5 w-24 rounded-full bg-slate-200">
+              <div
+                className="h-full rounded-full bg-indigo-500 transition-all"
+                style={{ width: `${Math.round((totalAnswered / totalRequired) * 100)}%` }}
+              />
             </div>
-          )}
+            <span className="text-[10px] font-semibold text-slate-400">
+              {Math.round((totalAnswered / totalRequired) * 100)}%
+            </span>
+          </div>
+        )}
+      </div>
 
-          {/* Data requests (only when needs_data and not complete) */}
-          {section.status === "needs_data" && section.data_requests.length > 0 && (
-            <div>
-              <p className="text-[10px] font-semibold uppercase tracking-wider text-slate-400 mb-3">
-                Required data — {section.data_requests.filter((d) => d.required).length} field
-                {section.data_requests.filter((d) => d.required).length !== 1 ? "s" : ""} needed
-              </p>
-              <div className="space-y-3">
-                {section.data_requests.map((dr) => (
+      {/* Questions grouped by section */}
+      <div className="divide-y divide-slate-100">
+        {sectionsWithRequests.map((section) => (
+          <div key={section.id} className="px-5 py-4">
+            {/* Section label */}
+            <p className="text-[10px] font-semibold uppercase tracking-wider text-indigo-500 mb-3">
+              {section.title}
+            </p>
+
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+              {section.data_requests.map((dr) => {
+                const key = `${section.id}::${dr.field}`;
+                const inputType =
+                  dr.type === "number" || dr.type === "percentage" ? "number" : "text";
+                return (
                   <div key={dr.field}>
-                    <label className="block text-xs font-semibold text-slate-700 mb-1">
+                    <label className="block text-xs font-semibold text-slate-700 mb-0.5">
                       {dr.label}
-                      {dr.required && <span className="text-red-500 ml-1">*</span>}
+                      {dr.required && <span className="text-red-500 ml-0.5">*</span>}
                     </label>
-                    <p className="text-[10px] text-slate-500 mb-1.5">{dr.description}</p>
+                    <p className="text-[10px] text-slate-400 mb-1.5 leading-relaxed">
+                      {dr.description}
+                    </p>
                     <input
-                      type={dr.type === "number" || dr.type === "percentage" ? "number" : dr.type}
-                      placeholder={`Enter ${dr.label.toLowerCase()}`}
-                      value={dataValues[dr.field] ?? dr.provided_value ?? ""}
+                      type={inputType}
+                      placeholder={dr.placeholder_text || `Enter ${dr.label.toLowerCase()}`}
+                      value={values[key] ?? ""}
                       onChange={(e) =>
-                        setDataValues((prev) => ({ ...prev, [dr.field]: e.target.value }))
+                        setValues((prev) => ({ ...prev, [key]: e.target.value }))
                       }
                       className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none focus:border-indigo-400 focus:ring-2 focus:ring-indigo-100 transition-all"
                     />
                   </div>
-                ))}
-              </div>
-
-              {error && (
-                <p className="mt-2 rounded-lg bg-red-50 px-3 py-2 text-xs text-red-700">
-                  {error}
-                </p>
-              )}
-
-              <div className="mt-4">
-                <button
-                  onClick={handleCompleteSection}
-                  disabled={submitting}
-                  className="inline-flex items-center gap-2 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-                >
-                  {submitting ? (
-                    <>
-                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                      Completing...
-                    </>
-                  ) : (
-                    <>
-                      <Sparkles className="h-3.5 w-3.5" />
-                      Complete section
-                    </>
-                  )}
-                </button>
-              </div>
+                );
+              })}
             </div>
+          </div>
+        ))}
+      </div>
+
+      {/* Footer */}
+      <div className="flex items-center justify-between gap-3 px-5 py-3 border-t border-slate-100 bg-slate-50">
+        {error ? (
+          <p className="text-xs text-red-600">{error}</p>
+        ) : (
+          <p className="text-xs text-slate-400">
+            Answers will be woven into the relevant sections by Claude
+          </p>
+        )}
+        <button
+          onClick={handleSubmitAll}
+          disabled={submitting || totalAnswered === 0}
+          className="inline-flex items-center gap-2 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex-shrink-0"
+        >
+          {submitting ? (
+            <>
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              Incorporating answers…
+            </>
+          ) : (
+            <>
+              <Sparkles className="h-3.5 w-3.5" />
+              Submit all answers
+            </>
           )}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// ── Section preview (collapsible) ─────────────────────────────────────────────
+
+function SectionPreview({ section }: { section: BCSection }) {
+  const [expanded, setExpanded] = useState(false);
+  const content = section.final_content ?? section.draft_content ?? "";
+
+  return (
+    <div className="rounded-lg border border-slate-200 bg-white overflow-hidden">
+      <button
+        className="flex w-full items-center justify-between px-4 py-2.5 hover:bg-slate-50 transition-colors"
+        onClick={() => setExpanded((v) => !v)}
+      >
+        <div className="flex items-center gap-2 min-w-0">
+          <ChevronRight
+            className={cn("h-3.5 w-3.5 flex-shrink-0 text-slate-400 transition-transform", expanded && "rotate-90")}
+          />
+          <span className="text-sm font-medium text-slate-700 truncate">{section.title}</span>
+        </div>
+        <StatusBadge status={section.status} />
+      </button>
+      {expanded && content && (
+        <div className="border-t border-slate-100 px-4 py-3">
+          <p className="text-xs text-slate-600 leading-relaxed whitespace-pre-wrap">{content}</p>
+        </div>
+      )}
+      {expanded && !content && (
+        <div className="border-t border-slate-100 px-4 py-3">
+          <p className="text-xs text-slate-400 italic">No content generated yet</p>
         </div>
       )}
     </div>
@@ -681,73 +750,72 @@ function ProjectDetailPanel({
   const completedCount = project.sections.filter((s) => s.status === "complete").length;
   const needsDataCount = project.sections.filter((s) => s.status === "needs_data").length;
   const totalCount = project.sections.length;
+  const pct = totalCount > 0 ? Math.round((completedCount / totalCount) * 100) : 0;
 
   return (
     <div className="flex flex-col h-full">
-      {/* Project header */}
-      <div className="flex items-start justify-between px-6 py-5 border-b border-slate-100">
+      {/* Header */}
+      <div className="flex items-start justify-between px-6 py-4 border-b border-slate-100 flex-shrink-0">
         <div>
           <h2 className="text-base font-semibold text-slate-900">{project.org_name}</h2>
-          <div className="flex items-center gap-3 mt-1.5">
+          <div className="flex items-center gap-3 mt-1">
             <StatusBadge status={project.status} />
             <span className="text-xs text-slate-500">
-              {totalCount} section{totalCount !== 1 ? "s" : ""} — {completedCount} complete
-              {needsDataCount > 0 ? ` — ${needsDataCount} need data` : ""}
+              {totalCount} sections · {completedCount} complete
+              {needsDataCount > 0 && (
+                <span className="text-amber-600"> · {needsDataCount} need data</span>
+              )}
             </span>
           </div>
-          <p className="text-xs text-slate-400 mt-1">
-            Template: {project.template_filename} •{" "}
-            {new Date(project.created_at).toLocaleDateString("en-GB")}
-          </p>
+          {/* Progress bar inline */}
+          {totalCount > 0 && (
+            <div className="flex items-center gap-2 mt-2">
+              <div className="h-1.5 w-32 rounded-full bg-slate-200">
+                <div
+                  className="h-full rounded-full bg-indigo-500 transition-all"
+                  style={{ width: `${pct}%` }}
+                />
+              </div>
+              <span className="text-[10px] text-slate-400 font-semibold">{pct}%</span>
+            </div>
+          )}
         </div>
 
         <a
           href={`/api/bc/download/${project.id}`}
           target="_blank"
           rel="noopener noreferrer"
-          className="inline-flex items-center gap-1.5 rounded-lg bg-green-600 px-3.5 py-2 text-xs font-semibold text-white hover:bg-green-700 transition-colors flex-shrink-0"
+          className="inline-flex items-center gap-1.5 rounded-lg bg-green-600 px-3.5 py-2 text-xs font-semibold text-white hover:bg-green-700 transition-colors flex-shrink-0 ml-4"
         >
           <Download className="h-3.5 w-3.5" />
           Download DOCX
         </a>
       </div>
 
-      {/* Progress bar */}
-      {totalCount > 0 && (
-        <div className="px-6 py-3 border-b border-slate-100 bg-slate-50">
-          <div className="flex items-center justify-between mb-1.5">
-            <span className="text-[10px] font-semibold uppercase tracking-wider text-slate-400">
-              Progress
-            </span>
-            <span className="text-[10px] font-semibold text-slate-500">
-              {Math.round((completedCount / totalCount) * 100)}%
-            </span>
-          </div>
-          <div className="h-1.5 rounded-full bg-slate-200">
-            <div
-              className="h-full rounded-full bg-indigo-500 transition-all"
-              style={{ width: `${(completedCount / totalCount) * 100}%` }}
-            />
-          </div>
-        </div>
-      )}
-
-      {/* Sections */}
-      <div className="flex-1 overflow-y-auto px-6 py-4 space-y-3">
+      {/* Scrollable body */}
+      <div className="flex-1 overflow-y-auto px-6 py-5 space-y-6">
         {project.sections.length === 0 ? (
-          <div className="flex flex-col items-center justify-center py-12 text-center">
+          <div className="flex flex-col items-center justify-center py-16 text-center">
             <FileText className="h-8 w-8 text-slate-300 mb-3" />
             <p className="text-sm text-slate-500">No sections found</p>
           </div>
         ) : (
-          project.sections.map((section) => (
-            <SectionCard
-              key={section.id}
-              section={section}
-              projectId={project.id}
-              onComplete={onRefresh}
-            />
-          ))
+          <>
+            {/* Questions panel — prominent, at the top */}
+            <QuestionsPanel project={project} onComplete={onRefresh} />
+
+            {/* Section previews */}
+            <div>
+              <p className="text-[10px] font-semibold uppercase tracking-wider text-slate-400 mb-2">
+                Section preview
+              </p>
+              <div className="space-y-2">
+                {project.sections.map((section) => (
+                  <SectionPreview key={section.id} section={section} />
+                ))}
+              </div>
+            </div>
+          </>
         )}
       </div>
     </div>

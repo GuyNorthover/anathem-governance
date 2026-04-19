@@ -1,7 +1,7 @@
 "use client";
 
-import { useState, useMemo } from "react";
-import { Search, Plus, MoreHorizontal, FileUp } from "lucide-react";
+import { useState, useMemo, useEffect, useCallback } from "react";
+import { Search, Plus, MoreHorizontal, FileUp, AlertTriangle } from "lucide-react";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -30,8 +30,9 @@ import { DomainBadge } from "./DomainBadge";
 import { TierBadge } from "./TierBadge";
 import { FactSheet, type SheetState } from "./FactSheet";
 import { SeedFromDocumentDialog } from "./SeedFromDocumentDialog";
+import { ConflictsPanel, type FactConflict } from "./ConflictsPanel";
 import { useFacts } from "@/resources/hooks/use-facts";
-import type { FactDomain, FactTier } from "@/lib/knowledge-base/types";
+import type { Fact, FactDomain, FactTier } from "@/lib/knowledge-base/types";
 
 // ── Mini stat card ─────────────────────────────────────────────────────────
 
@@ -53,8 +54,25 @@ export function KnowledgeBaseView() {
   const [domainFilter, setDomainFilter] = useState<FactDomain | "all">("all");
   const [sheetState, setSheetState] = useState<SheetState>(null);
   const [seedOpen, setSeedOpen] = useState(false);
+  const [conflicts, setConflicts] = useState<FactConflict[]>([]);
 
   const { data: facts, updateFact, createFact, reload } = useFacts();
+
+  const loadConflicts = useCallback(async () => {
+    const { createClient } = await import("@supabase/supabase-js");
+    const sb = createClient(
+      process.env.NEXT_PUBLIC_SUPABASE_URL!,
+      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+    );
+    const { data } = await sb
+      .from("fact_conflicts")
+      .select("*")
+      .eq("status", "pending")
+      .order("created_at", { ascending: false });
+    setConflicts(data ?? []);
+  }, []);
+
+  useEffect(() => { loadConflicts(); }, [loadConflicts]);
 
   // Derived counts
   const globalCount = facts.filter((f) => f.tier === "global").length;
@@ -95,9 +113,14 @@ export function KnowledgeBaseView() {
             </p>
           </div>
           <div className="flex items-center gap-2">
-            <Button size="sm" variant="outline" onClick={() => setSeedOpen(true)}>
+            <Button size="sm" variant="outline" onClick={() => setSeedOpen(true)} className="relative">
               <FileUp className="mr-1.5 h-4 w-4" />
               Import from Document
+              {conflicts.length > 0 && (
+                <span className="absolute -top-1.5 -right-1.5 flex h-4 w-4 items-center justify-center rounded-full bg-amber-500 text-[9px] font-bold text-white">
+                  {conflicts.length}
+                </span>
+              )}
             </Button>
             <Button size="sm" onClick={openCreate}>
               <Plus className="mr-1.5 h-4 w-4" />
@@ -113,6 +136,14 @@ export function KnowledgeBaseView() {
           <MiniStat label="Module" value={moduleCount} sub="Scoped to product module" />
           <MiniStat label="Org-Instance" value={orgInstanceCount} sub="Trust-level overrides" />
         </div>
+
+        {/* Conflicts panel — shown only when pending conflicts exist */}
+        {conflicts.length > 0 && (
+          <ConflictsPanel
+            conflicts={conflicts}
+            onResolved={() => { loadConflicts(); reload(); }}
+          />
+        )}
 
         {/* Filters */}
         <div className="flex items-center gap-3">
@@ -278,7 +309,7 @@ export function KnowledgeBaseView() {
       <SeedFromDocumentDialog
         open={seedOpen}
         onClose={() => setSeedOpen(false)}
-        onImport={async (extractedFacts) => {
+        onImport={async (extractedFacts, sourceDocument) => {
           const { createClient } = await import("@supabase/supabase-js");
           const sb = createClient(
             process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -293,30 +324,40 @@ export function KnowledgeBaseView() {
             return acc;
           }, []);
 
-          // Fetch which keys already exist
+          // Fetch which keys already exist (include current_value for conflict detection)
           const keys = deduped.map((f) => f.key);
           const { data: existing } = await sb
             .from("facts")
-            .select("id, fact_key")
+            .select("id, fact_key, current_value")
             .in("fact_key", keys);
-          const existingMap = new Map((existing ?? []).map((r: any) => [r.fact_key, r.id]));
+          const existingMap = new Map(
+            (existing ?? []).map((r: any) => [r.fact_key, { id: r.id, value: r.current_value }])
+          );
 
           const now = new Date().toISOString();
+          const conflictInserts: any[] = [];
+
           for (const f of deduped) {
-            const existingId = existingMap.get(f.key);
-            if (existingId) {
-              // UPDATE existing fact — only safe columns, avoids stale_reason type issue
-              const { error: err } = await sb
-                .from("facts")
-                .update({
-                  current_value: f.value,
-                  domain: f.domain,
-                  tier: f.tier,
-                  display_name: f.key,
-                  updated_at: now,
-                })
-                .eq("id", existingId);
-              if (err) return err.message;
+            const existingRow = existingMap.get(f.key);
+            if (existingRow) {
+              // Check if value differs (normalise whitespace for comparison)
+              const existingNorm = (existingRow.value ?? "").trim().replace(/\s+/g, " ");
+              const proposedNorm = f.value.trim().replace(/\s+/g, " ");
+
+              if (existingNorm !== proposedNorm) {
+                // Values differ — record a conflict instead of overwriting
+                conflictInserts.push({
+                  id: crypto.randomUUID(),
+                  fact_key: f.key,
+                  fact_id: existingRow.id,
+                  existing_value: existingRow.value,
+                  proposed_value: f.value,
+                  source_document: sourceDocument ?? null,
+                  source_type: "document_seed",
+                  status: "pending",
+                });
+              }
+              // If values are the same, no action needed
             } else {
               // INSERT new fact
               const { error: err } = await sb.from("facts").insert({
@@ -334,7 +375,17 @@ export function KnowledgeBaseView() {
               if (err) return err.message;
             }
           }
+
+          // Insert all conflict records
+          if (conflictInserts.length > 0) {
+            const { error: conflictErr } = await sb
+              .from("fact_conflicts")
+              .insert(conflictInserts);
+            if (conflictErr) return conflictErr.message;
+          }
+
           reload();
+          await loadConflicts();
           return null;
         }}
       />

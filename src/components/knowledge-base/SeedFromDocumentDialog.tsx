@@ -22,7 +22,7 @@ interface ExtractedFact {
 interface Props {
   open: boolean;
   onClose: () => void;
-  onImport: (facts: ExtractedFact[]) => Promise<string | null>;
+  onImport: (facts: ExtractedFact[], sourceDocument: string) => Promise<string | null>;
 }
 
 type Step = "upload" | "review" | "done";
@@ -117,7 +117,7 @@ export function SeedFromDocumentDialog({ open, onClose, onImport }: Props) {
     if (toImport.length === 0) return;
     setImporting(true);
     setImportError(null);
-    const err = await onImport(toImport);
+    const err = await onImport(toImport, file?.name ?? "Unknown document");
     setImporting(false);
     if (err) {
       setImportError(err);
